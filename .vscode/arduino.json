@@ -1,0 +1,7 @@
+{
+    "configuration": "cpu=atmega328old",
+    "board": "arduino:avr:nano",
+    "sketch": "PerepelAutomation.ino",
+    "port": "/dev/tty.usbserial-14140",
+    "programmer": "arduino:avrispmkii"
+}
