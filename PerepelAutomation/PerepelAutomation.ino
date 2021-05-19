@@ -20,8 +20,11 @@ ShiftRegister74HC595<1> sr(DATA_PIN, CLOCK_PIN, LATCH_PIN);
 // Clock
 RTC_DS3231 rtc;
 long tempClockUpdateTime = 0;
-const int CLOCK_UPDATE_TIME = 1000;
+long dataSavedTimeoutTemp = 0;
+const int DATA_SAVED_TIMEOUT = 1000;
+const int CLOCK_UPDATE_TIME = 100;
 int hours, minutes, seconds, day, month, year, prevDay, prevYear, prevMonth;
+long timeOnSeconds, timeOffSeconds;
 
 // Relay Pins
 // #define LIGHTS_RELAY 15
@@ -45,7 +48,7 @@ double temperature = 0;
 OneWire tempSensor(TEMP_SENSOR);
 
 long tempLastUpdateTime = 0;
-const int TEMP_UPDATE_TIME = 1000;
+const int TEMP_UPDATE_TIME = 500;
 
 int temperatureTreshold = 20;
 
@@ -144,6 +147,12 @@ int lightsState = LOW;
 
 int feedingStatus = 0;
 
+long convertTimeToSeconds(int hours, int minutes, int seconds = 0)
+{
+    long timeToSeconds = (long)hours * 3600 + minutes * 60 + seconds;
+    return timeToSeconds;
+}
+
 void setup()
 {
     Serial.begin(9600);
@@ -214,16 +223,15 @@ void setup()
     lightsOffHour = LIGHTS_OFF_HOUR;
     lightsOffMinutes = LIGHTS_OFF_MINUTES;
 
+    timeOnSeconds = convertTimeToSeconds(lightsOnHour, lightsOnMinutes);
+    timeOffSeconds = convertTimeToSeconds(lightsOffHour, lightsOffMinutes);
+
     // Relay Initialization
     // pinMode(LIGHTS_RELAY, OUTPUT);
 
     // delay(2000);
 
     // Servo Initialization
-    cage1.attach(11);
-    cage1.write(90);
-    delay(15);
-    cage1.write(0);
 
     // Encoder Setup
     enc.setType(TYPE1);
@@ -246,7 +254,7 @@ void setup()
         Serial.println("RTC lost power, lets set the time!");
         rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     };
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+
     sr.setAllLow();
 };
 
@@ -1068,6 +1076,10 @@ void encoderAction()
                         eeprom_write_byte(12, lightsOnMinutes);
                         eeprom_write_byte(13, lightsOffHour);
                         eeprom_write_byte(14, lightsOffMinutes);
+                        timeOnSeconds = convertTimeToSeconds(lightsOnHour, lightsOnMinutes);
+                        timeOffSeconds = convertTimeToSeconds(lightsOffHour, lightsOffMinutes);
+                        Serial.println(timeOnSeconds);
+                        Serial.println(timeOffSeconds);
                         editPageFlag = 0;
                         editPage5List = 0;
                         menuList = 6;
@@ -1180,14 +1192,69 @@ void dangerStatus(int led)
 
 void lightsManager()
 {
-    if ((lightsOnHour == hours) && (lightsOnMinutes == minutes) && (seconds == 0))
+    if (millis() - tempClockUpdateTime > CLOCK_UPDATE_TIME)
     {
-        lightsState = HIGH;
+        long currentTimeSeconds;
+        currentTimeSeconds = convertTimeToSeconds(hours, minutes, seconds);
+
+        long timeOnResult, timeOffResult;
+
+        int zerroCrossing = 0;
+
+        if (currentTimeSeconds == 0)
+        {
+            zerroCrossing = 1;
+        };
+
+        if (timeOnSeconds < timeOffSeconds)
+        {
+            timeOnResult = currentTimeSeconds - timeOnSeconds;
+            timeOffResult = timeOffSeconds - currentTimeSeconds;
+
+            if (timeOnResult >= 0 && timeOffResult >= 0)
+            {
+                lightsState = HIGH;
+            }
+            else
+            {
+                lightsState = LOW;
+            };
+        }
+        else if (timeOnSeconds > timeOffSeconds)
+        {
+            int mayZeroCross = 1;
+
+            if (zerroCrossing == 1)
+            {
+                timeOnResult = currentTimeSeconds - 0;
+                timeOffResult = timeOffSeconds - currentTimeSeconds;
+                if (timeOnResult >= 0 && timeOffResult >= 0)
+                {
+                    lightsState = HIGH;
+                }
+                else
+                {
+                    lightsState = 0;
+                    zerroCrossing = 0;
+                }
+            }
+            else
+            {
+                timeOnResult = currentTimeSeconds - timeOnSeconds;
+                timeOffResult = timeOffSeconds - currentTimeSeconds;
+                if (timeOnResult <= 0 && timeOffResult >= 0)
+                {
+                    lightsState = HIGH;
+                }
+                else
+                {
+                    lightsState = 0;
+                    zerroCrossing = 0;
+                }
+            };
+        }
     };
-    if ((lightsOffHour == hours) && (lightsOffMinutes == minutes) && (seconds == 0))
-    {
-        lightsState = LOW;
-    };
+
     sr.set(4, lightsState);
 };
 
@@ -1389,8 +1456,9 @@ void renderSavedFrame()
     display.print("   Data Saved   ");
     display.setCursor(0, 1);
     display.print("                ");
-    if (millis() - tempClockUpdateTime > 1000)
+    if (millis() - dataSavedTimeoutTemp > DATA_SAVED_TIMEOUT)
     {
+        dataSavedTimeoutTemp = millis();
         menuList = 0;
         editMode = 0;
     };
@@ -1842,6 +1910,6 @@ void detectTemperature()
         data[1] = tempSensor.read();
 
         temperature = ((data[1] << 8) | data[0]) * 0.0625;
-        temperature = round(temperature * 10) / 10.0;
+        temperature = round(temperature * 10.) / 10.;
     };
 };
